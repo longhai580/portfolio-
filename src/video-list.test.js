@@ -65,7 +65,7 @@ test("preserves categories and metadata while excluding private assets", async (
     });
 });
 
-test("caches responses for 60 seconds and refreshes at expiry", async () => {
+test("caches responses for 60 seconds, then serves stale data while refreshing", async () => {
     let time = 0;
     let requests = 0;
     const mux = stubMux(async () => [publicAsset(`asset-${++requests}`)]);
@@ -77,9 +77,36 @@ test("caches responses for 60 seconds and refreshes at expiry", async () => {
     assert.equal(requests, 1);
 
     time = 60_000;
+    // The expired list comes back immediately; the refresh runs in the background.
+    assert.strictEqual(await loadVideos(), first);
+    assert.equal(requests, 2);
+    await new Promise((resolve) => setImmediate(resolve));
+
     const refreshed = await loadVideos();
     assert.equal(requests, 2);
     assert.equal(refreshed[0].videos[0].id, "asset-2");
+});
+
+test("a failed background refresh keeps serving the last good list", async () => {
+    let time = 0;
+    let requests = 0;
+    const errors = [];
+    const loadVideos = createVideoListLoader(stubMux(async () => {
+        requests += 1;
+        if (requests === 2) throw new Error("Mux unavailable");
+        return [publicAsset(`asset-${requests}`)];
+    }), { now: () => time, onRefreshError: (error) => errors.push(error) });
+    const first = await loadVideos();
+
+    time = 60_000;
+    assert.strictEqual(await loadVideos(), first);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(errors.length, 1);
+    assert.strictEqual(await loadVideos(), first);
+
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 3);
+    assert.equal((await loadVideos())[0].videos[0].id, "asset-3");
 });
 
 test("concurrent requests share one Mux listing and TTL starts after it completes", async () => {

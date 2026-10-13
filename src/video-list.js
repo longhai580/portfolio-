@@ -34,14 +34,13 @@ export function createVideoListLoader(mux, {
     defaultCategory = "uncategorized",
     cacheTtlMs = 60_000,
     now = Date.now,
+    onRefreshError = (error) => console.error("Background video refresh failed:", error),
 } = {}) {
     let cachedCategories;
     let expiresAt = 0;
     let inFlight;
 
-    return async function loadVideos() {
-        if (cachedCategories && now() < expiresAt) return cachedCategories;
-
+    function refresh() {
         // Concurrent visitors share one Mux request, including on a cold cache.
         if (!inFlight) {
             inFlight = fetchCategories(mux, defaultCategory)
@@ -52,7 +51,15 @@ export function createVideoListLoader(mux, {
                 })
                 .finally(() => { inFlight = null; });
         }
-
         return inFlight;
+    }
+
+    return async function loadVideos() {
+        if (!cachedCategories) return refresh();
+
+        // Stale-while-revalidate: once a list exists, visitors never wait on Mux.
+        // An expired list is returned immediately and refreshed in the background.
+        if (now() >= expiresAt) refresh().catch(onRefreshError);
+        return cachedCategories;
     };
 }

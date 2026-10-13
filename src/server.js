@@ -32,7 +32,10 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.get("/api/videos", async (_req, res) => {
     try {
-        res.json(await loadVideos());
+        const videos = await loadVideos();
+        // Browsers/CDNs may reuse the list for 60s and serve it stale for a day while revalidating.
+        res.set("Cache-Control", "public, max-age=60, stale-while-revalidate=86400");
+        res.json(videos);
     } catch (e) {
         console.error(e);
         res.status(500).json({ error: "Failed to fetch videos" });
@@ -63,4 +66,6 @@ app.post("/api/uploads/direct", async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}`);
+    // Warm the cache on boot so the first visitor after a cold start doesn't also wait on Mux.
+    loadVideos().catch((e) => console.error("Initial video list load failed:", e));
 });
